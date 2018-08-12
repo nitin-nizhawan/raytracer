@@ -1,0 +1,180 @@
+<html>
+
+<body>
+<canvas id="c" style="height:600px" ></canvas>
+</body>
+<script>
+var w = 600;
+// Global variables.
+var out_idx = 0;
+// Get to the raw pixel data.
+var canvas = document.getElementById("c");
+var context2d = canvas.getContext("2d");
+var image_data = context2d.getImageData(0, 0, w, w);
+var raw_data = image_data.data;
+canvas.width = canvas.height = w;
+// Dot product.
+
+function dot(va,vb){
+   return va[0]*vb[0]+va[1]*vb[1]+va[2]*vb[2];
+   
+}
+function sub(va,vb){
+  return [va[0]-vb[0],va[1]-vb[1],va[2]-vb[2]];
+}
+function add(va,vb){
+  return [va[0]+vb[0],va[1]+vb[1],va[2]+vb[2]];
+}
+
+
+function mag(va){
+  return Math.sqrt(va[0]*va[0]+va[1]*va[1]+va[2]*va[2]);
+}
+function div(va,s){
+ return [va[0]/s,va[1]/s,va[2]/s];
+}
+
+function mul(va,s){
+ return [va[0]*s,va[1]*s,va[2]*s];
+}
+var camera = [w/2,w/2,w];
+var light = [w/16,3*w/2,7*w];
+function find_intersection(sc,sr,unit_dir,camera){
+  // solve parametric equation of sphere
+  // p = camera + unit_dir*t
+  // eq dot(p-sc,p-sc) = sr*sr  // solve for t (sol)
+  var A = 1;
+  var cam_sc = sub(camera,sc);
+  var B = 2*dot(unit_dir,cam_sc);
+  var C = dot(cam_sc,cam_sc) - sr*sr;
+  var disc = B*B - 4*C;
+  var sol = -1;
+  if(disc >= 0.0){
+         var disc_sq = Math.sqrt(disc);
+         var sol1  = (-B-disc_sq)/2;
+         var sol2  = (-B + disc_sq)/2;
+         var sol = sol1>0.0?sol1:sol2;
+         if(sol2 > 0.0){
+            sol = Math.min(sol,sol2);
+         }
+  }
+  return sol;
+
+}
+var sps=[
+  [[w/2,w/2,-w/2],w/6,[255,255,0]],
+  [[w/2,w/4,-w/2-w/16],w/6,[255,0,0]],
+  [[w/2,w*0.95,-w/2],w/4,[255,0,0]],
+  [[w*.95,w*0.95,-w*0.7],w/6,[0,255,0]],
+  [[w*.95,w*0.05,-w/2],w/6,[0,255,0]],
+  [[w*.45,w*0.05,-w/4],w/6,[122,255,255]],
+  [[w/2,-4*w,-3*w],4*w,[0,0,255]]
+];
+sps=[
+
+  [[0.0*w,0.2*w,-w/2],0.3*w,[255,255,0]],
+  [[w/2,w/4,-1.2*w],0.5*w,[255,0,0]],
+  [[0.95*w,w*0.15,-w/2],w/4,[0,255,0]],
+  [[w/2,-4*w,-6*w],6.5*w,[0,0,255]]
+];
+var ambient = 0.4;
+var reflection_coeff = 0.4;
+function get_intersection(source,direction,skip){
+  var win_s = -1;
+  var min_dist;
+  for(var s = 0;s<sps.length;s++){
+    if(s == skip) continue;
+      var sp = sps[s]; 
+      var scenter = sp[0];
+      var sradius = sp[1];
+      var sol = find_intersection(scenter,sradius,direction,source);
+      if(sol > 0.0  ){
+           if(win_s<0){
+                win_s = s;
+                min_dist = sol;
+           } else if(sol < min_dist) {
+              min_dist = sol;
+              win_s = s;
+           }
+      }
+   }
+  if(win_s > -1){
+      var sp = sps[win_s];
+      // intersection_position_vec = source_position_vec + dist*dir_unit_vec
+      var ri = add(source,mul(direction,min_dist)); 
+      return [win_s,ri];
+  }
+}
+function specular_reflection(light_vec,surface_normal,original_ray_dir){
+   var lreflect = sub(light_vec,mul(surface_normal,2*dot(light_vec,surface_normal)));
+   // cos theta between original_ray and reflected light
+   var spec_coeff = dot(div(lreflect,mag(lreflect)),original_ray_dir);
+   if(spec_coeff < 0) { spec_coeff = 0; }
+   return spec_coeff;
+}
+function do_ref_trace(r,sn,depth,skip){
+   var ray_traced = [0,0,0];
+   var camera = r;
+   //console.log(ray_dir);
+   var unit_ray_dir = sn
+   var intersection = get_intersection(camera,unit_ray_dir,skip);
+   if(intersection){
+      var win_s = intersection[0];
+      var sp = sps[win_s];
+      var ri = intersection[1];
+      var sn = div(sub(ri,sp[0]),sp[1]); // surface normal unit vectior
+       //refection vector
+      var rn = sub(unit_ray_dir,mul(sn,2*dot(unit_ray_dir,sn))); 
+      rn = div(rn,mag(rn))
+      var lvec = sub(light,ri);
+      var ldist = mag(lvec);
+      var lunit_vec = div(lvec,ldist);
+      // is light obstructed by any object?
+      var is_obstructed = get_intersection(ri,lunit_vec,win_s);
+      // specular reflection 
+     var spec_reflection = 0;
+     var diffuse_reflection = 0;
+    if(!is_obstructed){// if not obstructed
+      spec_reflection = specular_reflection(lvec,sn,unit_ray_dir);
+       
+      diffuse_reflection = dot(lunit_vec,sn); 
+       diffuse_reflection = diffuse_reflection * 0.5;
+      if(diffuse_reflection < 0) diffuse_reflection = 0;
+         diffuse_reflection = (50*w*w)*diffuse_reflection/(ldist*ldist)
+    }
+      var eff_light = mul(sps[win_s][2],diffuse_reflection+ambient+Math.pow(spec_reflection,29));
+     
+      ray_traced = eff_light;
+     if(depth>0){
+      var ref_color = do_ref_trace(ri,rn,--depth,win_s);
+      var ref_color_ef = mul(ref_color,reflection_coeff);
+      ray_traced = add(ref_color_ef,mul(eff_light,(1-reflection_coeff)));
+     }
+   }       
+   return ray_traced;
+}
+
+function do_ray_trace(cv,ch){
+   var pixel = [ch,w-cv,0];
+   var ray_traced=[0,0,0];
+   var ray_dir = sub(pixel,camera);
+   //console.log(ray_dir);
+   var unit_ray_dir = div(ray_dir,mag(ray_dir)); 
+   return do_ref_trace(camera,unit_ray_dir,9,-1);
+}
+var pix = 0;
+for(var cv=0;cv<w;cv++){
+  for(var ch=0;ch<w;ch++){
+     var ray_traced = do_ray_trace(cv,ch);
+     raw_data[pix]=ray_traced[0];
+     raw_data[pix+1]=ray_traced[1];
+     raw_data[pix+2]=ray_traced[2];
+     raw_data[pix+3]=255;
+     pix+=4;  
+  }
+}
+
+context2d.putImageData(image_data, 0, 0);
+
+</script>
+</html>
